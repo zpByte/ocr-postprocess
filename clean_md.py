@@ -39,6 +39,22 @@ def default_output_path(input_path: str) -> str:
     return f"{base}_clean{ext}"
 
 
+def _cell_text(cell: Tag) -> str:
+    """提取单元格文本。若含有序列表（<ol>），为每个 <li> 补上序号。"""
+    ol = cell.find("ol")
+    if ol:
+        parts = []
+        for i, li in enumerate(ol.find_all("li", recursive=False), start=1):
+            li_text = li.get_text(strip=True)
+            # li_text 内可能已包含 "2. xxx 3. xxx"（OCR 把多条塞进一个 li）
+            # 只在开头加上序号（如果还没有）
+            if not li_text.startswith(f"{i}."):
+                li_text = f"{i}. {li_text}"
+            parts.append(li_text)
+        return " ".join(parts)
+    return cell.get_text(strip=True)
+
+
 def _expand_table(table: Tag) -> None:
     """
     原地修改一个 <table> Tag：
@@ -73,7 +89,7 @@ def _expand_table(table: Tag) -> None:
 
             colspan = int(cell.get("colspan", 1))
             rowspan = int(cell.get("rowspan", 1))
-            text = cell.get_text(strip=True)
+            text = _cell_text(cell)
 
             # 填充 colspan
             for ci in range(colspan):
@@ -244,6 +260,10 @@ def clean_markdown(input_path: str, output_path: Optional[str] = None) -> str:
         return "\n\n" + converted_tables[idx] + "\n\n"
 
     result = re.sub(r"HTMLTABLE_PLACEHOLDER_(\d+)", restore, text_with_placeholders)
+
+    # pandoc 会把 pipe table 单元格内行首的 "1." 转义为 "1\."
+    # 但单元格内没有行首语义，直接还原
+    result = re.sub(r'(\|\s*)(\d+)\\\.', r'\1\2.', result)
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(result)
