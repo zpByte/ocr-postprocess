@@ -207,6 +207,78 @@ def preprocess_html_tables(text: str) -> str:
     return re.sub(r"<table[\s\S]*?</table>", fix_block, text, flags=re.IGNORECASE)
 
 
+def fix_latex_markup(text: str) -> str:
+    r"""
+    清洗 PaddleOCR / pandoc 输出中残留的 LaTeX 样式标注，转换为普通 Markdown：
+
+    - $ \underline{\text{XXX}} $  →  **XXX**   （下划线强调 → 加粗）
+    - $ \uwave{\text{XXX}} $      →  **XXX**   （波浪线强调 → 加粗）
+    - $ \underset{.}{X} $         →  X         （下点标注 → 纯文字）
+    - \$ ... \$（pandoc 转义版本，同上处理）
+
+    行首独立 LaTeX 标题（如 "##### $ \underline{\text{XXX}} $"）会在标题符号保留
+    后，把 LaTeX 部分替换为加粗文字，整体结构不变。
+    """
+    # 统一处理：先把 \$ 反转义为 $ 以便后续统一匹配
+    # pandoc 在 pipe table 单元格内会把 $ 转义为 \$
+    text = re.sub(r'\\\$', '$', text)
+
+    # 1. $ \underline{\text{内容}} $  →  **内容**
+    text = re.sub(
+        r'\$\s*\\underline\{\\text\{([^}]*)\}\}\s*\$',
+        lambda m: f'**{m.group(1).strip()}**',
+        text,
+    )
+
+    # 2. $ \uwave{\text{内容}} $  →  **内容**
+    text = re.sub(
+        r'\$\s*\\uwave\{\\text\{([^}]*)\}\}\s*\$',
+        lambda m: f'**{m.group(1).strip()}**',
+        text,
+    )
+
+    # 3. $ \underset{任意}{内容} $  →  内容
+    #    如 $ \underset{\cdot}{配} $  →  配
+    text = re.sub(
+        r'\$\s*\\underset\{[^}]*\}\{([^}]*)\}\s*\$',
+        lambda m: m.group(1).strip(),
+        text,
+    )
+
+    # 4. 兜底：清理剩余孤立的空 $ $ 或 $  $（OCR 有时产生空数学块）
+    text = re.sub(r'\$\s*\$', '', text)
+
+    return text
+
+
+def fix_leading_period(text: str) -> str:
+    r"""
+    将行首的无序列表误识别符号转换为 Markdown 无序列表符号（-）。
+
+    PaddleOCR 有时把无序列表的项目符号识别为：
+    - 中文句号 "。"
+    - 实心圆点 "•"（U+2022 BULLET）
+
+    规则：
+    - 仅处理行首的上述符号（含行首有空格后跟符号的情况）
+    - 保留符号后原有内容，前置改为"- "
+    - 若符号后紧跟空格，也一并去除多余空格
+    - 行中间出现的句号 / 圆点不受影响
+    """
+    lines = text.split('\n')
+    result = []
+    for line in lines:
+        # 匹配行首（含前缀空格）+ 中文句号 或 实心圆点 •
+        m = re.match(r'^(\s*)[。•]\s*(.*)', line)
+        if m:
+            indent = m.group(1)
+            content = m.group(2)
+            result.append(f'{indent}- {content}')
+        else:
+            result.append(line)
+    return '\n'.join(result)
+
+
 def clean_markdown(input_path: str, output_path: Optional[str] = None) -> str:
     """用 pandoc 将富 Markdown 转换为普通 Markdown，返回输出路径。"""
     if not os.path.exists(input_path):
@@ -264,6 +336,12 @@ def clean_markdown(input_path: str, output_path: Optional[str] = None) -> str:
     # pandoc 会把 pipe table 单元格内行首的 "1." 转义为 "1\."
     # 但单元格内没有行首语义，直接还原
     result = re.sub(r'(\|\s*)(\d+)\\\.', r'\1\2.', result)
+
+    # 5. 清洗 LaTeX 样式标注
+    result = fix_latex_markup(result)
+
+    # 6. 修复行首中文句号 → Markdown 无序列表符号
+    result = fix_leading_period(result)
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(result)
