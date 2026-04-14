@@ -24,8 +24,15 @@ import re
 import subprocess
 import shutil
 from typing import Optional
+from pathlib import Path
 
 from bs4 import BeautifulSoup, Tag
+
+# 导入 download_images 的 process_md_file 函数
+try:
+    from download_images import process_md_file as download_images_process
+except ImportError:
+    download_images_process = None
 
 
 def check_pandoc():
@@ -347,6 +354,19 @@ def clean_markdown(input_path: str, output_path: Optional[str] = None) -> str:
         f.write(result)
 
     print(f"✅ 已转换：{output_path}")
+
+    # 自动调用 download_images 下载图片（可通过环境变量 SKIP_DOWNLOAD_IMAGES=1 禁用）
+    if os.environ.get("SKIP_DOWNLOAD_IMAGES") == "1":
+        print("ℹ️  已设置 SKIP_DOWNLOAD_IMAGES=1，跳过图片下载")
+    elif download_images_process is not None:
+        print("📥 正在自动下载图片...")
+        try:
+            download_images_process(output_path)
+        except Exception as e:
+            print(f"⚠️  图片下载过程中出错：{e}", file=sys.stderr)
+    else:
+        print("ℹ️  未找到 download_images.py，跳过图片下载")
+
     return output_path
 
 
