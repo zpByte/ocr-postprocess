@@ -41,9 +41,50 @@ def check_pandoc():
         sys.exit(1)
 
 
-def default_output_path(input_path: str) -> str:
-    base, ext = os.path.splitext(input_path)
-    return f"{base}_clean{ext}"
+def extract_title(content: str) -> Optional[str]:
+    """提取 Markdown 文档中的第一个标题（# 开头的行）。"""
+    for line in content.split('\n'):
+        line = line.strip()
+        if line.startswith('#'):
+            # 移除 # 符号和前后的空格
+            title = line.lstrip('#').strip()
+            if title:
+                return title
+    return None
+
+
+def sanitize_filename(name: str) -> str:
+    """清理文件名中的非法字符，保留中文、英文、数字、空格、下划线和连字符。"""
+    # 替换文件名中不允许的字符为下划线
+    # macOS/Windows/Linux 都不允许: / \ : * ? " < > |
+    # 我们还移除一些控制字符和其他特殊字符
+    name = re.sub(r'[\\/:*?"<>|]', '_', name)
+    # 移除前后空格和点（避免隐藏文件问题）
+    name = name.strip(' .')
+    # 如果清理后为空，返回默认名称
+    return name if name else '未命名'
+
+
+def default_output_path(input_path: str, title: Optional[str] = None) -> str:
+    """生成输出文件路径。
+    
+    如果提供了 title，使用标题作为文件名；否则使用原文件名加 _clean 后缀。
+    """
+    input_dir = os.path.dirname(input_path)
+    
+    if title:
+        # 使用标题作为文件名
+        clean_title = sanitize_filename(title)
+        filename = f"{clean_title}.md"
+    else:
+        # 使用原文件名加 _clean 后缀
+        base, _ = os.path.splitext(input_path)
+        filename = f"{os.path.basename(base)}_clean.md"
+    
+    if input_dir:
+        return os.path.join(input_dir, filename)
+    else:
+        return filename
 
 
 def _cell_text(cell: Tag) -> str:
@@ -307,11 +348,14 @@ def clean_markdown(input_path: str, output_path: Optional[str] = None) -> str:
     if not os.path.exists(input_path):
         raise FileNotFoundError(f"文件不存在：{input_path}")
 
-    if output_path is None:
-        output_path = default_output_path(input_path)
-
     with open(input_path, "r", encoding="utf-8") as f:
         raw = f.read()
+
+    # 提取标题用于文件命名
+    title = extract_title(raw)
+    
+    if output_path is None:
+        output_path = default_output_path(input_path, title)
 
     # 1. 修复纯 pipe table 的空表头行（PaddleOCR bug）
     text = fix_empty_pipe_table_headers(raw)
