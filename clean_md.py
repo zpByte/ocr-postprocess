@@ -315,6 +315,67 @@ def fix_latex_markup(text: str) -> str:
     return text
 
 
+def format_numbers_with_commas(text: str) -> str:
+    r"""
+    为 ≥ 10000 的数字添加千位逗号分隔符。
+
+    跳过以下情况：
+    - 4 位数年份（1900–2099）
+    - 已含逗号的数字
+    - 前后紧跟字母 / 下划线的编号（如 v1000、id_10000）
+    - Markdown 链接 / 图片中的数字（URL 内）
+    - 代码块内的数字
+
+    示例：
+        12345   → 12,345
+        1234567 → 1,234,567
+        2024    → 2024（年份，跳过）
+        12345.6 → 12,345.6
+    """
+    # 先把代码块保护起来，避免格式化代码中的数字
+    code_blocks: list[str] = []
+    CODE_PH = "\x00CODE_BLOCK_{idx}\x00"
+
+    def save_code(m: re.Match) -> str:
+        code_blocks.append(m.group(0))
+        return CODE_PH.format(idx=len(code_blocks) - 1)
+
+    # 匹配围栏式代码块（```...```）和行内代码（`...`）
+    protected = re.sub(r'```[\s\S]*?```|`[^`\n]+`', save_code, text)
+
+    def add_commas(m: re.Match) -> str:
+        num_str = m.group(0)
+        # 跳过 4 位年份（1900–2099）
+        if re.fullmatch(r'(19|20)\d{2}', num_str):
+            return num_str
+        # 分离小数部分
+        if '.' in num_str:
+            int_part, dec_part = num_str.split('.', 1)
+        else:
+            int_part, dec_part = num_str, None
+
+        val = int(int_part)
+        if val < 10000:
+            return num_str  # 不足万位，跳过
+
+        formatted_int = f"{val:,}"
+        return f"{formatted_int}.{dec_part}" if dec_part is not None else formatted_int
+
+    # 匹配独立数字（前后不能是字母、下划线、句点、斜线、逗号）
+    # 确保不在 URL 内（简单地排除前面是 / 或 = 的情况）
+    protected = re.sub(
+        r'(?<![a-zA-Z_./=\-#,\d])(\d{4,}(?:\.\d+)?)(?![a-zA-Z_,\d])',
+        lambda m: add_commas(m),
+        protected,
+    )
+
+    # 还原代码块
+    def restore_code(m: re.Match) -> str:
+        return code_blocks[int(m.group(1))]
+
+    return re.sub(r'\x00CODE_BLOCK_(\d+)\x00', restore_code, protected)
+
+
 def fix_leading_period(text: str) -> str:
     r"""
     将行首的无序列表误识别符号转换为 Markdown 无序列表符号（-）。
@@ -412,6 +473,9 @@ def clean_markdown(input_path: str, output_path: Optional[str] = None) -> str:
 
     # 7. 修复行首中文句号 → Markdown 无序列表符号
     result = fix_leading_period(result)
+
+    # 8. 为 ≥ 10000 的数字添加千位逗号分隔符
+    result = format_numbers_with_commas(result)
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(result)
