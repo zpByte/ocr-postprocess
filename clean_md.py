@@ -214,6 +214,22 @@ def preprocess_html_tables(text: str) -> str:
     return re.sub(r"<table[\s\S]*?</table>", fix_block, text, flags=re.IGNORECASE)
 
 
+def strip_div_tags(text: str) -> str:
+    r"""
+    移除 Markdown 中所有 <div ...>...</div> 标签，但保留内部内容。
+
+    PaddleOCR 有时会输出带样式属性的 div 标签，如：
+        <div style="text-align: center;"><div style="text-align: center;">表1-2：Q1月度消耗走势</div> </div>
+
+    这些标签在标准 Markdown 中没有意义，直接剥离即可。
+    """
+    # 用 bs4 解析并移除所有 div 标签
+    soup = BeautifulSoup(text, "html.parser")
+    for div in soup.find_all("div"):
+        div.unwrap()  # 保留内容，只移除标签本身
+    return str(soup)
+
+
 def fix_latex_markup(text: str) -> str:
     r"""
     清洗 PaddleOCR / pandoc 输出中残留的 LaTeX 样式标注，转换为普通 Markdown：
@@ -344,10 +360,13 @@ def clean_markdown(input_path: str, output_path: Optional[str] = None) -> str:
     # 但单元格内没有行首语义，直接还原
     result = re.sub(r'(\|\s*)(\d+)\\\.', r'\1\2.', result)
 
-    # 5. 清洗 LaTeX 样式标注
+    # 5. 移除 <div> 标签（保留内容）
+    result = strip_div_tags(result)
+
+    # 6. 清洗 LaTeX 样式标注
     result = fix_latex_markup(result)
 
-    # 6. 修复行首中文句号 → Markdown 无序列表符号
+    # 7. 修复行首中文句号 → Markdown 无序列表符号
     result = fix_leading_period(result)
 
     with open(output_path, "w", encoding="utf-8") as f:
