@@ -263,12 +263,12 @@ def strip_div_tags(text: str) -> str:
         <div style="text-align: center;"><div style="text-align: center;">表1-2：Q1月度消耗走势</div> </div>
 
     这些标签在标准 Markdown 中没有意义，直接剥离即可。
+    注意：不用 bs4 解析整个文档，避免 & 被转义为 &amp;。
     """
-    # 用 bs4 解析并移除所有 div 标签
-    soup = BeautifulSoup(text, "html.parser")
-    for div in soup.find_all("div"):
-        div.unwrap()  # 保留内容，只移除标签本身
-    return str(soup)
+    # 用正则移除 <div ...> 和 </div> 标签，保留内容
+    text = re.sub(r'<div[^>]*>', '', text)
+    text = re.sub(r'</div>', '', text)
+    return text
 
 
 def fix_latex_markup(text: str) -> str:
@@ -277,6 +277,8 @@ def fix_latex_markup(text: str) -> str:
 
     - $ \underline{\text{XXX}} $  →  **XXX**   （下划线强调 → 加粗）
     - $ \uwave{\text{XXX}} $      →  **XXX**   （波浪线强调 → 加粗）
+    - $ \dashuline{XXX} $         →  **XXX**   （虚线下划线 → 加粗，OCR 可能漏掉 \）
+    - $ dashuline{XXX} $          →  **XXX**   （同上，OCR 漏识别反斜杠）
     - $ \underset{.}{X} $         →  X         （下点标注 → 纯文字）
     - \$ ... \$（pandoc 转义版本，同上处理）
 
@@ -297,6 +299,15 @@ def fix_latex_markup(text: str) -> str:
     # 2. $ \uwave{\text{内容}} $  →  **内容**
     text = re.sub(
         r'\$\s*\\uwave\{\\text\{([^}]*)\}\}\s*\$',
+        lambda m: f'**{m.group(1).strip()}**',
+        text,
+    )
+
+    # 2b. $ \dashuline{内容} $ 或 $ dashuline{内容} $  →  **内容**
+    #     OCR 有时把 \dashuline 的反斜杠漏识别，需同时覆盖两种形态
+    #     内容可能含 \text{...} 或直接是文字
+    text = re.sub(
+        r'\$\s*\\?dashuline\{(?:\\text\{)?([^}]*)(?:\})?\}\s*\$',
         lambda m: f'**{m.group(1).strip()}**',
         text,
     )
@@ -464,6 +475,9 @@ def clean_markdown(input_path: str, output_path: Optional[str] = None) -> str:
     # pandoc 会把 pipe table 单元格内行首的 "1." 转义为 "1\."
     # 但单元格内没有行首语义，直接还原
     result = re.sub(r'(\|\s*)(\d+)\\\.', r'\1\2.', result)
+
+    # pandoc 会把 pipe table 单元格内独立的 "-" 转义为 "\-"，直接全局还原
+    result = result.replace(r'\-', '-')
 
     # 5. 移除 <div> 标签（保留内容）
     result = strip_div_tags(result)
